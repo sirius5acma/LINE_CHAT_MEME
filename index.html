@@ -1,0 +1,463 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LINE 聊天紀錄與 MEME 產生器</title>
+    <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+    <style>
+        * { box-sizing: border-box; }
+        body { margin: 0; font-family: 'Helvetica Neue', Helvetica, Arial, '微軟正黑體', sans-serif; display: flex; height: 100vh; background: #eee; user-select: none; }
+        
+        #sidebar { width: 260px; background: #fff; border-right: 1px solid #ccc; display: flex; flex-direction: column; flex-shrink: 0; }
+        #tools-box { padding: 15px; border-bottom: 1px solid #ddd; background: #f9f9f9; }
+        #search-input { width: 100%; padding: 8px 12px; border: 1px solid #ccc; border-radius: 20px; outline: none; font-size: 14px; margin-bottom: 10px; }
+        
+        #meme-toggle { width: 100%; padding: 8px; background: #ff9800; color: white; border: none; border-radius: 8px; cursor: pointer; font-weight: bold; transition: 0.2s; }
+        #meme-toggle.active { background: #e65100; box-shadow: inset 0 3px 5px rgba(0,0,0,0.2); }
+        
+        #month-list { flex: 1; overflow-y: auto; padding: 10px; }
+        .month-btn { display: block; width: 100%; padding: 12px 10px; margin-bottom: 5px; border: none; background: #f0f4f8; cursor: pointer; text-align: left; border-radius: 8px; font-size: 14px; transition: 0.2s; }
+        .month-btn:hover { background: #d9e2ec; }
+        .month-btn.active { background: #4a5568; color: #fff; font-weight: bold; }
+        
+        #chat-container { flex: 1; background: #8cabd9; overflow-y: auto; display: flex; flex-direction: column; padding: 20px; position: relative; scroll-behavior: smooth; }
+        
+        .msg-row { display: flex; margin-bottom: 15px; width: 100%; transition: background 0.2s; border-radius: 8px; padding: 5px; cursor: pointer; }
+        .msg-row.me { flex-direction: row-reverse; }
+        
+        .avatar { width: 40px; height: 40px; border-radius: 50%; margin: 0 10px; display: flex; align-items: center; justify-content: center; font-size: 16px; color: #fff; font-weight: bold; flex-shrink: 0; }
+        
+        .msg-content { max-width: 65%; display: flex; flex-direction: column; }
+        .msg-row.me .msg-content { align-items: flex-end; }
+        .msg-row.other .msg-content { align-items: flex-start; }
+        
+        .sender-name { font-size: 12px; color: #2a3439; margin-bottom: 4px; padding-left: 5px; }
+        .bubble-wrap { display: flex; align-items: flex-end; }
+        .msg-row.me .bubble-wrap { flex-direction: row-reverse; }
+        
+        .bubble { padding: 8px 14px; border-radius: 16px; font-size: 15px; line-height: 1.5; word-wrap: break-word; white-space: pre-wrap; box-shadow: 0 1px 2px rgba(0,0,0,0.1); }
+        .msg-row.other .bubble { background: #fff; border-top-left-radius: 3px; }
+        .msg-row.me .bubble { background: #85e249; border-top-right-radius: 3px; }
+        
+        .time { font-size: 11px; color: #4a5568; margin: 0 8px; margin-bottom: 2px; flex-shrink: 0; }
+        
+        .date-badge { text-align: center; margin: 25px 0 15px 0; padding: 5px; }
+        .date-badge span { background: rgba(0,0,0,0.15); color: #fff; padding: 4px 14px; border-radius: 20px; font-size: 12px; }
+        .sys-msg { text-align: center; color: #4a5568; font-size: 12px; margin: 15px 0; font-weight: bold; background: rgba(255,255,255,0.4); display: inline-block; padding: 4px 12px; border-radius: 12px; align-self: center; }
+
+        @keyframes highlightFlash {
+            0% { background-color: rgba(255, 193, 7, 0.6); box-shadow: 0 0 15px rgba(255, 193, 7, 0.8); }
+            100% { background-color: transparent; box-shadow: none; }
+        }
+        .jump-highlight { animation: highlightFlash 3s ease-out forwards; border-radius: 8px; }
+
+        body.meme-mode .msg-row, body.meme-mode .sys-msg { cursor: pointer; }
+        body.meme-mode .msg-row:hover { background: rgba(255,255,255,0.2); }
+        body.meme-mode .meme-selected { background: rgba(255,255,255,0.5) !important; box-shadow: 0 0 5px rgba(255,255,255,0.8); border-radius: 8px; }
+
+        #download-btn { display: none; position: absolute; bottom: 30px; right: 30px; background: #e91e63; color: white; border: none; padding: 15px 20px; border-radius: 30px; font-size: 16px; font-weight: bold; cursor: pointer; box-shadow: 0 4px 10px rgba(0,0,0,0.3); z-index: 100; }
+        #download-btn:hover { background: #c2185b; }
+        body.meme-mode #download-btn { display: block; }
+
+        #export-container { position: absolute; top: -9999px; left: -9999px; width: 600px; background: #8cabd9; padding: 20px; display: flex; flex-direction: column; }
+
+        #press-progress { position: fixed; pointer-events: none; display: none; width: 60px; height: 60px; transform: translate(-50%, -50%); z-index: 9999; }
+        #press-progress svg { width: 100%; height: 100%; transform: rotate(-90deg); }
+        #press-progress circle { fill: none; stroke-width: 5; stroke: rgba(0, 0, 0, 0.2); }
+        #press-progress .progress-circle { stroke: #ff5722; stroke-dasharray: 151; stroke-dashoffset: 151; stroke-linecap: round; }
+
+        /* ================= 說明書按鈕與彈窗 CSS ================= */
+        #help-btn { position: absolute; top: 15px; right: 20px; background: rgba(255,255,255,0.8); border: 1px solid #ccc; padding: 6px 12px; border-radius: 20px; font-size: 13px; font-weight: bold; cursor: pointer; z-index: 50; transition: 0.2s; box-shadow: 0 2px 5px rgba(0,0,0,0.1); color: #333; }
+        #help-btn:hover { background: #fff; box-shadow: 0 4px 8px rgba(0,0,0,0.2); }
+
+        #help-modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000; justify-content: center; align-items: center; }
+        #help-modal.show { display: flex; }
+        .modal-content { background: #fff; width: 90%; max-width: 500px; padding: 25px; border-radius: 12px; position: relative; box-shadow: 0 10px 25px rgba(0,0,0,0.2); line-height: 1.6; }
+        .modal-content h2 { margin-top: 0; font-size: 20px; color: #2c3e50; border-bottom: 2px solid #eee; padding-bottom: 10px; }
+        .modal-content ul { padding-left: 20px; }
+        .modal-content li { margin-bottom: 12px; }
+        .close-btn { position: absolute; top: 15px; right: 20px; font-size: 24px; cursor: pointer; color: #888; transition: 0.2s; }
+        .close-btn:hover { color: #333; }
+
+        @media (max-width: 600px) {
+            body { flex-direction: column; }
+            #sidebar { width: 100%; height: 200px; border-right: none; border-bottom: 1px solid #ccc; }
+            #month-list { display: flex; flex-direction: row; flex-wrap: wrap; align-content: flex-start; }
+            .month-btn { width: auto; margin-right: 5px; padding: 8px 12px; }
+            #help-btn { top: 215px; right: 10px; } /* 手機版調整按鈕位置避免擋到選單 */
+        }
+    </style>
+</head>
+<body>
+    <div id="sidebar">
+        <div id="tools-box">
+            <input type="text" id="search-input" placeholder="按 Enter 搜尋...">
+            <button id="meme-toggle">📸 開啟 MEME 截圖模式</button>
+        </div>
+        <div id="month-list">
+            <button class="month-btn" id="btn-all">⭐ 全部聊天紀錄</button>
+        </div>
+    </div>
+    
+    <div id="chat-container">
+        <div style="text-align:center; margin-top: 50px; color: #fff;">請從左側選擇月份載入，或在上方搜尋</div>
+    </div>
+    
+    <!-- 說明書按鈕 -->
+    <button id="help-btn">❓ 使用說明</button>
+
+    <!-- 說明書彈出視窗 -->
+    <div id="help-modal">
+        <div class="modal-content">
+            <span class="close-btn" id="close-help">&times;</span>
+            <h2>📖 聊天紀錄 & MEME 小工具</h2>
+            <ul>
+                <li><strong>🔍 智慧搜尋：</strong>在左上角輸入關鍵字並按 Enter，即可找出所有相關對話。</li>
+                <li><strong>⏱️ 長按跳轉：</strong>在「搜尋結果」中，<strong>長按</strong>任一則對話（直到橘色圓圈轉滿），系統會自動跳轉回該對話發生的原始月份，並標示高光，方便你看前後文！</li>
+                <li><strong>📸 MEME 截圖產生器：</strong>
+                    <ol>
+                        <li>點擊左上方「開啟 MEME 截圖模式」。</li>
+                        <li>點選你想保留的對話（可複選，對話框會反白）。</li>
+                        <li>點擊右下角「⬇️ 下載已選取的截圖」。系統會自動幫你補上日期，並匯出完美的 LINE 綠色背景截圖！</li>
+                    </ol>
+                </li>
+            </ul>
+        </div>
+    </div>
+    
+    <button id="download-btn">⬇️ 下載已選取的截圖</button>
+    <div id="export-container"></div>
+
+    <div id="press-progress">
+        <svg viewBox="0 0 60 60">
+            <circle cx="30" cy="30" r="24"></circle>
+            <circle cx="30" cy="30" r="24" class="progress-circle" id="progress-circle-bar"></circle>
+        </svg>
+    </div>
+
+    <script src="data.js"></script>
+    <script>
+        // ================= 說明書邏輯 =================
+        const helpBtn = document.getElementById('help-btn');
+        const helpModal = document.getElementById('help-modal');
+        const closeHelp = document.getElementById('close-help');
+
+        helpBtn.addEventListener('click', () => helpModal.classList.add('show'));
+        closeHelp.addEventListener('click', () => helpModal.classList.remove('show'));
+        window.addEventListener('click', (e) => {
+            if (e.target === helpModal) helpModal.classList.remove('show');
+        });
+
+        // ================= 核心邏輯 =================
+        const monthList = document.getElementById('month-list');
+        const chatContainer = document.getElementById('chat-container');
+        const searchInput = document.getElementById('search-input');
+        const memeToggle = document.getElementById('meme-toggle');
+        const downloadBtn = document.getElementById('download-btn');
+        const exportContainer = document.getElementById('export-container');
+        
+        let allDataArr = [];
+        let currentViewData = [];
+        let currentRenderIndex = 0;
+        const CHUNK_SIZE = 50;
+        let isMemeMode = false;
+        let isSearchMode = false;
+
+        let pressInterval;
+        let pressStartTime = 0;
+        const PRESS_DURATION = 700; 
+        const progressEl = document.getElementById('press-progress');
+        const progressBar = document.getElementById('progress-circle-bar');
+
+        if (typeof chatData !== 'undefined') {
+            const months = Object.keys(chatData).sort();
+            let globalId = 0; 
+            
+            months.forEach(month => {
+                allDataArr.push({ type: 'date', content: `${month} 的紀錄` });
+                chatData[month].forEach(msg => {
+                    msg._id = 'msg-' + globalId++;
+                    msg._month = month; 
+                    allDataArr.push(msg);
+                });
+                
+                const btn = document.createElement('button');
+                btn.className = 'month-btn';
+                btn.textContent = month;
+                btn.onclick = () => {
+                    setActiveButton(btn);
+                    isSearchMode = false;
+                    startRender(chatData[month]);
+                };
+                monthList.appendChild(btn);
+            });
+            
+            document.getElementById('btn-all').onclick = function() {
+                setActiveButton(this);
+                isSearchMode = false;
+                startRender(allDataArr);
+            };
+
+            if(months.length > 0) monthList.lastChild.click();
+        }
+
+        function setActiveButton(activeBtn) {
+            document.querySelectorAll('.month-btn').forEach(b => b.classList.remove('active'));
+            if(activeBtn) activeBtn.classList.add('active');
+            searchInput.value = '';
+        }
+
+        searchInput.addEventListener('keypress', function (e) {
+            if (e.key === 'Enter') {
+                const keyword = this.value.trim().toLowerCase();
+                if (!keyword) return;
+                
+                setActiveButton(null);
+                isSearchMode = true; 
+                const results = [{ type: 'system', text: `以下為「${keyword}」的搜尋結果 (長按訊息可跳轉至該對話)` }];
+                
+                for (const month in chatData) {
+                    let currentDate = "未知日期";
+                    let lastAddedDate = ""; 
+
+                    chatData[month].forEach(msg => {
+                        if (msg.type === 'date') {
+                            currentDate = msg.content;
+                        } 
+                        else if (msg.type === 'message' || msg.type === 'system') {
+                            if ((msg.text && msg.text.toLowerCase().includes(keyword)) || 
+                                (msg.sender && msg.sender.toLowerCase().includes(keyword))) {
+                                
+                                if (currentDate !== lastAddedDate) {
+                                    results.push({ type: 'date', content: currentDate });
+                                    lastAddedDate = currentDate; 
+                                }
+                                results.push(msg);
+                            }
+                        }
+                    });
+                }
+                if (results.length === 1) results.push({ type: 'system', text: '找不到符合的訊息' });
+                startRender(results);
+            }
+        });
+
+        function startRender(dataArray) {
+            let tempDate = "未知日期";
+            dataArray.forEach(msg => {
+                if (msg.type === 'date') tempDate = msg.content;
+                msg._associatedDate = tempDate;
+            });
+
+            currentViewData = dataArray;
+            currentRenderIndex = 0;
+            chatContainer.innerHTML = ''; 
+            chatContainer.scrollTop = 0; 
+            renderNextChunk();
+        }
+
+        function createDOMNode(msg) {
+            const div = document.createElement('div');
+            
+            if (msg._associatedDate) {
+                div.setAttribute('data-date', msg._associatedDate);
+            }
+            if (msg._id) {
+                div.id = 'dom-' + msg._id; 
+            }
+            
+            if (msg.type === 'date') {
+                div.className = 'date-badge';
+                div.innerHTML = `<span>${msg.content}</span>`;
+            } else if (msg.type === 'system') {
+                div.className = 'sys-msg';
+                div.innerText = `${msg.time ? msg.time + ' ' : ''}${msg.text}`;
+            } else {
+                const isMe = msg.is_me;
+                const rowClass = isMe ? 'me' : 'other';
+                const avatarLetter = msg.sender.charAt(0);
+                const colorHash = [...msg.sender].reduce((acc, char) => acc + char.charCodeAt(0), 0) % 360;
+                const avatarBg = `hsl(${colorHash}, 50%, 55%)`;
+
+                div.className = `msg-row ${rowClass}`;
+                div.innerHTML = `
+                    ${!isMe ? `<div class="avatar" style="background:${avatarBg}">${avatarLetter}</div>` : ''}
+                    <div class="msg-content">
+                        ${!isMe ? `<div class="sender-name">${msg.sender}</div>` : ''}
+                        <div class="bubble-wrap">
+                            <div class="bubble">${escapeHTML(msg.text)}</div>
+                            <div class="time">${msg.time}</div>
+                        </div>
+                    </div>
+                `;
+            }
+            
+            div.onclick = function() {
+                if (isMemeMode && !this.classList.contains('date-badge')) {
+                    this.classList.toggle('meme-selected');
+                }
+            };
+
+            if (msg.type === 'message' || msg.type === 'system') {
+                const startPress = (e) => {
+                    if (isMemeMode || !isSearchMode) return;
+                    pressStartTime = Date.now();
+                    
+                    let clientX = e.clientX || (e.touches && e.touches[0].clientX);
+                    let clientY = e.clientY || (e.touches && e.touches[0].clientY);
+                    
+                    progressEl.style.left = clientX + 'px';
+                    progressEl.style.top = clientY + 'px';
+                    progressEl.style.display = 'block';
+                    progressBar.style.strokeDashoffset = 151;
+                    
+                    const updateProgress = () => {
+                        const elapsed = Date.now() - pressStartTime;
+                        let percent = elapsed / PRESS_DURATION;
+                        
+                        if (percent >= 1) {
+                            cancelPress();
+                            jumpToMessage(msg); 
+                        } else {
+                            progressBar.style.strokeDashoffset = 151 * (1 - percent);
+                            pressInterval = requestAnimationFrame(updateProgress);
+                        }
+                    };
+                    pressInterval = requestAnimationFrame(updateProgress);
+                };
+
+                const cancelPress = () => {
+                    cancelAnimationFrame(pressInterval);
+                    progressEl.style.display = 'none';
+                };
+
+                div.addEventListener('mousedown', startPress);
+                div.addEventListener('touchstart', startPress, {passive: true});
+                
+                div.addEventListener('mouseup', cancelPress);
+                div.addEventListener('mouseleave', cancelPress);
+                div.addEventListener('touchend', cancelPress);
+                div.addEventListener('touchmove', cancelPress);
+            }
+
+            return div;
+        }
+
+        function renderNextChunk() {
+            if (currentRenderIndex >= currentViewData.length) return;
+            
+            const fragment = document.createDocumentFragment();
+            const endIndex = Math.min(currentRenderIndex + CHUNK_SIZE, currentViewData.length);
+            
+            for (let i = currentRenderIndex; i < endIndex; i++) {
+                const div = createDOMNode(currentViewData[i]);
+                fragment.appendChild(div);
+            }
+            
+            chatContainer.appendChild(fragment);
+            currentRenderIndex = endIndex;
+        }
+
+        chatContainer.addEventListener('scroll', () => {
+            if (chatContainer.scrollHeight - chatContainer.scrollTop - chatContainer.clientHeight < 200) {
+                renderNextChunk();
+            }
+        });
+
+        function jumpToMessage(msg) {
+            if (!msg || !msg._month) return;
+            
+            const monthBtns = Array.from(document.querySelectorAll('.month-btn'));
+            const targetBtn = monthBtns.find(b => b.textContent === msg._month);
+            if (targetBtn) setActiveButton(targetBtn);
+            
+            isSearchMode = false;
+            currentViewData = chatData[msg._month];
+            chatContainer.innerHTML = '';
+            
+            const targetIndex = currentViewData.findIndex(m => m._id === msg._id);
+            
+            currentRenderIndex = 0;
+            let endIndex = Math.min(targetIndex + 20, currentViewData.length);
+            
+            const fragment = document.createDocumentFragment();
+            for (let i = 0; i < endIndex; i++) {
+                const div = createDOMNode(currentViewData[i]);
+                if (i === targetIndex) {
+                    div.classList.add('jump-highlight'); 
+                    div.id = 'jump-target';
+                }
+                fragment.appendChild(div);
+            }
+            
+            chatContainer.appendChild(fragment);
+            currentRenderIndex = endIndex;
+            
+            setTimeout(() => {
+                const targetEl = document.getElementById('jump-target');
+                if (targetEl) {
+                    targetEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    setTimeout(() => targetEl.classList.remove('jump-highlight'), 3500);
+                }
+            }, 100);
+        }
+
+        memeToggle.addEventListener('click', () => {
+            isMemeMode = !isMemeMode;
+            document.body.classList.toggle('meme-mode', isMemeMode);
+            memeToggle.classList.toggle('active', isMemeMode);
+            
+            if (isMemeMode) {
+                memeToggle.textContent = '❌ 關閉截圖模式';
+            } else {
+                memeToggle.textContent = '📸 開啟 MEME 截圖模式';
+                document.querySelectorAll('.meme-selected').forEach(el => el.classList.remove('meme-selected'));
+            }
+        });
+
+        downloadBtn.addEventListener('click', () => {
+            const selectedItems = document.querySelectorAll('.meme-selected');
+            if (selectedItems.length === 0) {
+                alert('請先點擊你想截圖的訊息！');
+                return;
+            }
+
+            exportContainer.innerHTML = '';
+            let lastAppendedDate = ""; 
+
+            selectedItems.forEach(item => {
+                const msgDate = item.getAttribute('data-date');
+                if (msgDate && msgDate !== lastAppendedDate) {
+                    const dateBadge = document.createElement('div');
+                    dateBadge.className = 'date-badge';
+                    dateBadge.innerHTML = `<span>${msgDate}</span>`;
+                    exportContainer.appendChild(dateBadge);
+                    lastAppendedDate = msgDate;
+                }
+                const clone = item.cloneNode(true);
+                clone.classList.remove('meme-selected');
+                exportContainer.appendChild(clone);
+            });
+
+            downloadBtn.textContent = '處理中...';
+
+            html2canvas(exportContainer, { backgroundColor: '#8cabd9', scale: 2 }).then(canvas => {
+                const link = document.createElement('a');
+                link.download = `LINE_MEME_${new Date().getTime()}.png`;
+                link.href = canvas.toDataURL('image/png');
+                link.click();
+                
+                downloadBtn.textContent = '⬇️ 下載已選取的截圖';
+                exportContainer.innerHTML = '';
+            });
+        });
+
+        function escapeHTML(str) {
+            return str.replace(/[&<>'"]/g, 
+                tag => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[tag] || tag)
+            );
+        }
+    </script>
+</body>
+</html>
